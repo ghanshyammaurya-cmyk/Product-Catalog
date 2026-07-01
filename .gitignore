@@ -1,0 +1,117 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/*.pdf
+downloads/*.txt
+downloads/*.html
+downloads/*.png
+downloads/*.zip
+!downloads/.gitkeep
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# --- Testing & coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.cache/
+
+# --- Playwright ---
+playwright-report/
+test-results/
+trace.zip
+blob-report/
+playwright/.cache/
+
+# --- Project outputs (generated at runtime) ---
+reports/
+screenshots/
+downloads/*
+!downloads/.gitkeep
+
+# Allure
+allure-results/
+allure-report/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+secrets.json
+*.key
+
+# --- IDE / editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+
+# --- Temporary / debug ---
+*.tmp
+*.temp
+*.bak
+debug_*.html
+detail_body.txt

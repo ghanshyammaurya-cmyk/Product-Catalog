@@ -1,0 +1,6 @@
+{
+  "name": "staging",
+  "base_url": "https://builders.intel.com",
+  "edge_catalog_url": "https://builders.intel.com/ecosystem-engagement/solution-hub/edge-ai-catalog",
+  "partner_spotlight_url": "https://builders.intel.com/ecosystem-engagement/solution-hub/edge-ai-catalog/partner-spotlight?type=system"
+}

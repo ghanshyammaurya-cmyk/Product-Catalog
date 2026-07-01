@@ -1,0 +1,23 @@
+{
+  "default_environment": "prod",
+  "browser": "chromium",
+  "headless": true,
+  "slow_mo": 500,
+  "scroll_step_pixels": 200,
+  "scroll_delay_ms": 350,
+  "auto_slow_scroll": true,
+  "timeout": 30000,
+  "navigation_timeout": 60000,
+  "download_path": "downloads",
+  "screenshot_path": "screenshots",
+  "report_path": "reports",
+  "testdata_path": "testdata/partner_products.xlsx",
+  "testdata_sheet": "PartnerProducts",
+  "retry_count": 2,
+  "retry_delay": 2,
+  "parallel_workers": "auto",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  }
+}
