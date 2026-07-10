@@ -2,9 +2,7 @@
 
 from utilities.category_parser import (
     format_category_subcategory_report,
-    parse_category_subcategory as _parse_cat_sub,
     parse_category_subcategory_pairs,
-    parse_ticket_sections,
 )
 from utilities.text_parser import parse_expected_features as _parse_features
 
@@ -19,7 +17,10 @@ def get_str(data, key, default=""):
     value = data.get(key, default)
     if value is None:
         return default
-    return str(value).strip()
+    text = str(value).strip()
+    if text.lower() == "nan":
+        return default
+    return text
 
 
 def parse_breadcrumb_trail(value):
@@ -32,51 +33,56 @@ def parse_breadcrumb_trail(value):
     return [part.strip() for part in text.split(">") if part.strip()]
 
 
-def parse_category_subcategory(data):
-    return _parse_cat_sub(data)
+def get_category_subcategory_raw(data):
+    """Single Excel column: category_subcategory (ticket multi-line format)."""
+    combined = get_str(data, "category_subcategory")
+    if combined:
+        return combined
+    # Backward compatibility if sheet still uses expected_categories
+    return get_str(data, "expected_categories")
 
 
 def format_category_subcategory(data):
-    """Display value for reports — Category / Sub Category lines from Excel."""
-    category = get_str(data, "category")
-    subcategory = get_str(data, "subcategory")
-    if category and subcategory:
-        pairs = [{"category": category, "subcategory": subcategory}]
-        extra = parse_category_subcategory_pairs(get_str(data, "category_subcategory"))
-        if extra:
-            pairs = extra
+    """Display value for reports from category_subcategory column."""
+    combined = get_category_subcategory_raw(data)
+    if not combined:
+        return ""
+    pairs = parse_category_subcategory_pairs(combined)
+    if pairs:
         return format_category_subcategory_report(pairs)
-
-    combined = get_str(data, "category_subcategory")
-    if combined:
-        pairs = parse_category_subcategory_pairs(combined)
-        if pairs:
-            return format_category_subcategory_report(pairs)
-        return combined
-    return category or subcategory or ""
+    return combined
 
 
 def get_category_subcategory_pairs(data):
-    """All Category / Sub Category pairs from Excel row."""
-    category = get_str(data, "category")
-    subcategory = get_str(data, "subcategory")
-    if category and subcategory:
-        pairs = [{"category": category, "subcategory": subcategory}]
-    else:
-        pairs = []
+    """All category/sub-category pairs from category_subcategory column."""
+    combined = get_category_subcategory_raw(data)
+    if not combined:
+        return []
+    return parse_category_subcategory_pairs(combined)
 
-    combined = get_str(data, "category_subcategory")
+
+def parse_category_subcategory(data):
+    """Legacy alias — returns (category, [subcategories]) from category_subcategory."""
+    from utilities.category_parser import parse_category_subcategory_value
+
+    combined = get_category_subcategory_raw(data)
     if combined:
-        ticket_pairs = parse_category_subcategory_pairs(combined)
-        if ticket_pairs:
-            return ticket_pairs
-    return pairs
+        return parse_category_subcategory_value(combined)
+    return "", []
 
 
 def parse_expected_categories(value):
-    """Parse multi-line category spec into individual terms to verify."""
+    """Parse category_subcategory / expected_categories into individual terms."""
     if value is None or str(value).strip() == "" or str(value).lower() == "nan":
         return []
+
+    pairs = parse_category_subcategory_pairs(str(value))
+    if pairs:
+        terms = []
+        for pair in pairs:
+            terms.append(pair["category"])
+            terms.append(pair["subcategory"])
+        return terms
 
     text = str(value).strip()
     terms = []

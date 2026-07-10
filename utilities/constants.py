@@ -100,8 +100,16 @@ PRODUCT_TYPE_SELECTORS = {
 
 BREADCRUMB_SELECTORS = [".breadcrumb", "[class*='breadcrumb' i]:not(nav ol)"]
 
-GRID_VIEW_SELECTORS = ["button:has(i.fa-th-large)", "button.btn:has(i.fa-th-large)"]
-LIST_VIEW_SELECTORS = ["button:has(i.fa-th-list)", "button.btn:has(i.fa-th-list)"]
+GRID_VIEW_SELECTORS = [
+    "button.btn-primary.mask-pii:has(i.fa-th-large)",
+    "button.btn:has(i.fa-th-large):not([class*='category-host'])",
+    "button:has(i.fa-th-large)",
+]
+LIST_VIEW_SELECTORS = [
+    "button.btn-primary.mask-pii:has(i.fa-th-list)",
+    "button.btn:has(i.fa-th-list):not([class*='category-host'])",
+    "button:has(i.fa-th-list)",
+]
 
 LISTING_CARD_SELECTOR = ".listview, .gridview"
 PRODUCT_LINK_SELECTORS = [
@@ -120,10 +128,13 @@ PRODUCT_TITLE_SELECTORS = [
 
 CONTACT_LINK_SELECTORS = [
     "a:has-text('Contact')",
+    "a:has-text('Partner Contact')",
     "button:has-text('Contact')",
+    "button:has-text('Partner Contact')",
     "a[href*='contact' i]",
     "a[href*='mailto:' i]",
     "[class*='contact' i] a",
+    "[class*='contact' i] button",
 ]
 
 FEATURES_SECTION_SELECTORS = [

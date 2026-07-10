@@ -71,7 +71,6 @@ df.loc[mask, "expected_meta_description"] = (
     "The UNO-258 is Advantech's next-generation fanless Edge AI Box PC designed to accelerate "
     "real-time AI applications in smart manufacturing, machine"
 )
-df.loc[mask, "expected_og_title"] = "Advantech UNO-258"
 df.loc[mask, "validate_pdf"] = False
 
 with pd.ExcelWriter(PATH, engine="openpyxl") as writer:

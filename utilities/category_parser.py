@@ -205,15 +205,18 @@ def format_category_subcategory_report(pairs):
     """Human-readable Category / Sub Category block for logs and HTML report."""
     if not pairs:
         return "N/A"
-    lines = [
-        f"Category: {p['category']} | Sub Category: {p['subcategory']}" for p in pairs
-    ]
+    lines = [pair_to_ticket_line(p) for p in pairs]
     return "\n".join(lines)
 
 
+def pair_to_ticket_line(pair):
+    """Single ticket-style line: Vertical: Retail"""
+    return f"{pair['category']}: {pair['subcategory']}"
+
+
 def filter_result_key(category, subcategory):
-    """Standard key used in logs and step results."""
-    return f"Category: {category} | Sub Category: {subcategory}"
+    """Standard key used in logs and step results (ticket format)."""
+    return pair_to_ticket_line({"category": category, "subcategory": subcategory})
 
 
 def parse_primary_filter_values(value, max_values=3):

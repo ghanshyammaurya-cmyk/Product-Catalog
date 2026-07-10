@@ -7,6 +7,11 @@ Examples:
     python run_tests.py --headed --slow-mo 800
     python run_tests.py -m smoke
     python run_tests.py tests/test_partner_spotlight.py -v
+
+Reports (after each run):
+    reports/report.html              — HTML report
+    reports/test_results_*.xlsx      — Excel with pass/fail, expected vs actual
+    reports/latest_test_results.xlsx — always points to the latest Excel report
 """
 import os
 import sys

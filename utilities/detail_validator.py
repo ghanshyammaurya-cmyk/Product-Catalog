@@ -1,5 +1,7 @@
 from playwright.sync_api import Page
 
+import re
+
 from utilities.constants import (
     CATEGORIES_SECTION_SELECTORS,
     CONTACT_LINK_SELECTORS,
@@ -64,39 +66,285 @@ class DetailValidator:
         return True, "Product description validated", full[:300]
 
     def validate_partner_contact_link(self, expected_fragment=""):
+        """Validate partner contact — mailto:, https URL, or domain fragment."""
+        from utilities.text_parser import parse_expected_contact_fragments
+
+        if isinstance(expected_fragment, (list, tuple)):
+            expected_fragments = [str(f).strip() for f in expected_fragment if str(f).strip()]
+        else:
+            expected_fragments = parse_expected_contact_fragments(expected_fragment)
+
+        contact_links = self._collect_contact_candidates()
+        page_haystack = self._contact_page_haystack()
+
+        if not contact_links and not page_haystack:
+            info = {"matched": [], "missing": expected_fragments, "links": []}
+            return False, "Partner contact link not found or invalid", info
+
+        if not expected_fragments:
+            link = contact_links[0] if contact_links else {"text": "contact", "href": ""}
+            return (
+                True,
+                f"Partner contact found: {link.get('text') or link.get('href')}",
+                {"matched": ["any"], "missing": [], "links": contact_links},
+            )
+
+        matched = []
+        missing = []
+        for fragment in expected_fragments:
+            if self._fragment_on_contact_page(fragment, contact_links, page_haystack):
+                matched.append(fragment)
+            else:
+                missing.append(fragment)
+
+        info = {"matched": matched, "missing": missing, "links": contact_links}
+
+        if missing:
+            on_page = [
+                link.get("resolved") or link.get("href") or link.get("text")
+                for link in contact_links[:5]
+            ]
+            return (
+                False,
+                (
+                    f"Partner contact mismatch ({len(matched)}/{len(expected_fragments)} matched). "
+                    f"Missing: {missing}. On page: {on_page}"
+                ),
+                info,
+            )
+
+        primary = contact_links[0] if contact_links else {}
+        return (
+            True,
+            (
+                f"Partner contact OK ({len(matched)} fragment(s)): "
+                f"{primary.get('resolved') or primary.get('text') or primary.get('href')}"
+            ),
+            info,
+        )
+
+    def _collect_contact_candidates(self):
+        """Collect contact controls including javascript:void(0) + onclick mailto."""
+        candidates = []
+        seen = set()
+
+        harvested = self.page.evaluate(
+            """() => {
+                const out = [];
+                const nodes = document.querySelectorAll(
+                    'a, button, [role="button"], [role="link"], [class*="contact" i] *'
+                );
+                for (const el of nodes) {
+                    const href = el.getAttribute('href') || '';
+                    const onclick = el.getAttribute('onclick') || '';
+                    const text = (el.textContent || '').trim().slice(0, 200);
+                    const attrs = Array.from(el.attributes)
+                        .map(a => `${a.name}=${a.value}`)
+                        .join(' ');
+                    const hay = `${href} ${onclick} ${text} ${attrs}`.toLowerCase();
+                    if (!/contact|mailto|@|partner/i.test(hay)) continue;
+
+                    const mailtoMatch =
+                        hay.match(/mailto:[^\\s'";,)]+/i) ||
+                        attrs.match(/mailto:[^\\s'";,)]+/i);
+                    const emails = [
+                        ...new Set(
+                            (hay.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/gi) || [])
+                        ),
+                    ];
+
+                    let resolved = href;
+                    if (mailtoMatch) {
+                        resolved = mailtoMatch[0];
+                    } else if (emails.length === 1) {
+                        resolved = `mailto:${emails[0]}`;
+                    }
+
+                    out.push({
+                        href,
+                        onclick,
+                        text,
+                        attrs: attrs.slice(0, 400),
+                        mailto: mailtoMatch ? mailtoMatch[0] : '',
+                        emails,
+                        resolved,
+                    });
+                }
+                return out;
+            }"""
+        )
+
+        for item in harvested or []:
+            key = (item.get("href", ""), item.get("text", "")[:60], item.get("mailto", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(item)
+
         for selector in CONTACT_LINK_SELECTORS:
             links = self.page.locator(selector)
-            for i in range(links.count()):
+            for i in range(min(links.count(), 20)):
                 link = links.nth(i)
-                text = link.inner_text(timeout=3000).strip()
-                href = link.get_attribute("href") or ""
-                is_contact = (
-                    "contact" in text.lower()
-                    or "contact" in href.lower()
-                    or text.lower().startswith("contact ")
-                )
-                if not is_contact:
+                try:
+                    text = link.inner_text(timeout=2000).strip()
+                    href = link.get_attribute("href") or ""
+                    onclick = link.get_attribute("onclick") or ""
+                except Exception:
                     continue
-                if expected_fragment and expected_fragment.lower() not in href.lower():
-                    if expected_fragment.lower() not in text.lower():
-                        continue
-                target = href if href.startswith("http") else f"https://builders.intel.com{href}"
-                if href.startswith("http") or href.startswith("/"):
-                    resp = self.page.request.head(target, timeout=15000)
-                    if resp.ok or resp.status in (301, 302, 303, 307, 308):
-                        return True, f"Partner contact link OK: {text or href}", {
-                            "text": text,
-                            "href": href,
-                        }
-                return True, f"Partner contact control found: {text}", {"text": text, "href": href}
-        return False, "Partner contact link not found or invalid", {}
+                if not self._is_partner_contact_link(href, text, onclick):
+                    continue
+                hay = f"{href} {onclick} {text}".lower()
+                emails = re.findall(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", hay, re.I)
+                mailto = re.search(r"mailto:[^\s'\";,)]+", hay, re.I)
+                resolved = mailto.group(0) if mailto else (f"mailto:{emails[0]}" if len(emails) == 1 else href)
+                key = (href, text[:60], resolved)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    {
+                        "href": href,
+                        "onclick": onclick,
+                        "text": text,
+                        "attrs": "",
+                        "mailto": mailto.group(0) if mailto else "",
+                        "emails": emails,
+                        "resolved": resolved,
+                    }
+                )
 
-    def validate_features_section(self, expected_features=None):
-        """Validate Features section against client-provided feature list."""
-        if isinstance(expected_features, str):
-            from utilities.text_parser import parse_expected_features
-            expected_features = parse_expected_features(expected_features)
+        return candidates
 
+    def _contact_page_haystack(self):
+        """HTML/text blob for contact section and mailto fallbacks."""
+        parts = []
+        for selector in (
+            "[class*='contact' i]",
+            "a:has-text('Contact')",
+            "button:has-text('Contact')",
+            "main",
+        ):
+            loc = self.page.locator(selector).first
+            try:
+                if loc.count():
+                    parts.append(loc.inner_html(timeout=3000))
+                    parts.append(loc.inner_text(timeout=2000))
+            except Exception:
+                continue
+        try:
+            parts.append(self.page.content())
+        except Exception:
+            pass
+        return "\n".join(p for p in parts if p)
+
+    def _fragment_on_contact_page(self, fragment, contact_links, page_haystack):
+        if self._contact_matches_fragment("", "", fragment, page_haystack=page_haystack):
+            return True
+        return any(
+            self._contact_matches_fragment(
+                link.get("href", ""),
+                link.get("text", ""),
+                fragment,
+                onclick=link.get("onclick", ""),
+                attrs=link.get("attrs", ""),
+                mailto=link.get("mailto", ""),
+                emails=link.get("emails", []),
+                resolved=link.get("resolved", ""),
+            )
+            for link in contact_links
+        )
+
+    @staticmethod
+    def _is_partner_contact_link(href, text, onclick=""):
+        href_l = (href or "").lower()
+        text_l = (text or "").lower()
+        onclick_l = (onclick or "").lower()
+        blob = f"{href_l} {text_l} {onclick_l}"
+        return (
+            href_l.startswith("mailto:")
+            or "contact" in href_l
+            or "contact" in text_l
+            or text_l.startswith("contact ")
+            or "partner contact" in text_l
+            or "mailto:" in onclick_l
+            or ("@" in blob and "contact" in blob)
+        )
+
+    @staticmethod
+    def _extract_email(fragment):
+        frag = str(fragment or "").strip().lower()
+        if frag.startswith("mailto:"):
+            return frag.replace("mailto:", "").strip()
+        if "@" in frag and not frag.startswith("http"):
+            return frag
+        return ""
+
+    @staticmethod
+    def _contact_matches_fragment(
+        href,
+        text,
+        fragment,
+        onclick="",
+        attrs="",
+        emails=None,
+        mailto="",
+        resolved="",
+        page_haystack="",
+    ):
+        fragment = str(fragment or "").strip()
+        if not fragment:
+            return False
+
+        href_l = (href or "").lower()
+        text_l = (text or "").lower()
+        frag_l = fragment.lower().strip()
+        blob = " ".join(
+            [
+                href_l,
+                text_l,
+                (onclick or "").lower(),
+                (attrs or "").lower(),
+                (mailto or "").lower(),
+                (resolved or "").lower(),
+                (page_haystack or "").lower(),
+            ]
+        )
+        if emails:
+            blob += " " + " ".join(e.lower() for e in emails)
+
+        expected_email = DetailValidator._extract_email(fragment)
+        if expected_email:
+            if expected_email in blob:
+                return True
+            if f"mailto:{expected_email}" in blob:
+                return True
+            return False
+
+        frag_norm = frag_l.rstrip("/")
+        bare = frag_norm.replace("https://", "").replace("http://", "")
+
+        if frag_norm in blob:
+            return True
+        if bare and bare in blob:
+            return True
+        if href_l and frag_norm in href_l.rstrip("/"):
+            return True
+        return False
+
+    def _verify_contact_link_reachable(self, href):
+        """HEAD check for http(s) links only — skip mailto: and relative without base."""
+        if not href or href.lower().startswith("mailto:"):
+            return True
+        target = href if href.startswith("http") else f"https://builders.intel.com{href}"
+        if not href.startswith("http") and not href.startswith("/"):
+            return True
+        try:
+            resp = self.page.request.head(target, timeout=15000)
+            return resp.ok or resp.status in (301, 302, 303, 307, 308)
+        except Exception:
+            return True
+
+    def _collect_features_section_text(self):
         page_text = self.page.inner_text("body")
         section_text = ""
         for selector in FEATURES_SECTION_SELECTORS:
@@ -107,33 +355,70 @@ class DetailValidator:
             if len(text) > 10:
                 section_text = text
                 break
+        return section_text, page_text
 
-        haystack = (section_text or page_text).lower()
-        if "feature" not in haystack and not section_text:
-            return False, "Features section not found", ""
+    def validate_features_section(self, expected_features=None, strict=True):
+        """Validate Features section against client-provided feature list."""
+        from utilities.text_parser import feature_on_site, parse_expected_features
+
+        if isinstance(expected_features, str):
+            expected_features = parse_expected_features(expected_features)
+
+        section_text, page_text = self._collect_features_section_text()
+        haystack = section_text or page_text
+        haystack_lower = haystack.lower()
+
+        if "feature" not in haystack_lower and not section_text:
+            info = {"found": [], "missing": list(expected_features or []), "section_text": ""}
+            return False, "Features section not found", "", info
 
         if not expected_features:
-            return True, "Features section present", section_text[:200]
+            return True, "Features section present", section_text[:200], {
+                "found": [],
+                "missing": [],
+                "section_text": section_text[:500],
+            }
 
         found = []
         missing = []
         for feature in expected_features:
-            keywords = [w for w in feature.replace("&", " ").split() if len(w) > 3]
-            if feature.lower() in haystack:
-                found.append(feature)
-            elif keywords and sum(1 for w in keywords if w.lower() in haystack) >= max(1, len(keywords) // 2):
+            if feature_on_site(feature, haystack):
                 found.append(feature)
             else:
                 missing.append(feature)
 
+        info = {
+            "found": found,
+            "missing": missing,
+            "section_text": section_text[:500],
+        }
+
+        if strict:
+            if missing:
+                msg = (
+                    f"Strict feature validation failed: {len(missing)}/{len(expected_features)} "
+                    f"missing from detail page.\n"
+                    + "\n".join(f"  [FAIL] {item}" for item in missing)
+                )
+                return False, msg, section_text[:200], info
+            msg = f"All {len(expected_features)} features found on detail page"
+            return True, msg, section_text[:200], info
+
+        # Legacy partial mode (kept for optional use)
         min_required = max(2, len(expected_features) // 2)
         if len(found) < min_required:
             return (
                 False,
                 f"Features missing ({len(found)}/{len(expected_features)}): {missing}",
                 section_text[:200],
+                info,
             )
-        return True, f"Features validated ({len(found)}/{len(expected_features)})", section_text[:200]
+        return (
+            True,
+            f"Features validated ({len(found)}/{len(expected_features)})",
+            section_text[:200],
+            info,
+        )
 
     def validate_resources_section(self, expected_url=""):
         links = []

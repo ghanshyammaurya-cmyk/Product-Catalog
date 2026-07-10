@@ -152,19 +152,77 @@ class PartnerSpotlightPage(BasePage):
     def get_product_link_count(self):
         return self.listing.get_search_result_count()
 
+    def is_search_results_page(self, search_term=""):
+        """True when Partner Spotlight in-page search is active (pSearch in URL)."""
+        url = self.page.url.lower()
+        if "psearch=" in url:
+            return True
+        term = (search_term or "").strip().lower()
+        if term and term in url:
+            return True
+        if term and term in (self.page.url or ""):
+            return True
+        return False
+
+    def validate_views_on_search_results(self, search_term="", product_name=""):
+        """
+        Client UI: grid/list toggle icons appear after searching by product name.
+        Ensures search context, then validates both views and optional product card.
+        """
+        term = (search_term or "").strip()
+        if term and not self.is_search_results_page(term):
+            self.search_products(term)
+
+        grid_ok, grid_count = self.validate_grid_view()
+        grid_product_ok = True
+        if product_name:
+            grid_product_ok, _ = self.listing.validate_application_name(product_name)
+
+        list_ok, list_count = self.validate_list_view()
+        list_product_ok = True
+        if product_name:
+            list_product_ok, _ = self.listing.validate_application_name(product_name)
+
+        return {
+            "on_search_page": self.is_search_results_page(term),
+            "grid_ok": grid_ok,
+            "grid_count": grid_count,
+            "list_ok": list_ok,
+            "list_count": list_count,
+            "grid_product_ok": grid_product_ok,
+            "list_product_ok": list_product_ok,
+        }
+
     def validate_grid_view(self):
         try:
             self.switch_to_grid_view()
         except AssertionError:
             pass
-        return self.is_grid_view_active(), self.get_product_link_count()
+        active = self.is_grid_view_active()
+        count = self.get_product_link_count()
+        if not active and count > 0:
+            # Retry once — toggle can lag after filters/search
+            try:
+                self.switch_to_grid_view()
+                active = self.is_grid_view_active()
+            except AssertionError:
+                pass
+        return active, count
 
     def validate_list_view(self):
         try:
             self.switch_to_list_view()
         except AssertionError:
             pass
-        return self.is_list_view_active(), self.get_product_link_count()
+        active = self.is_list_view_active()
+        count = self.get_product_link_count()
+        if not active and count > 0:
+            try:
+                self.switch_to_list_view()
+                active = self.is_list_view_active()
+            except AssertionError:
+                pass
+        return active, count
 
     def apply_category_subcategory(self, category_subcategory=""):
         """Apply filters from category_subcategory column (simple or multi-line format)."""

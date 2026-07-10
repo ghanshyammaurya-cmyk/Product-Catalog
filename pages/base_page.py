@@ -118,33 +118,86 @@ class BasePage:
                 return
 
     def switch_to_grid_view(self):
-        self.click_first_visible(GRID_VIEW_SELECTORS)
-        self.page.wait_for_timeout(1000)
-        self.logger.info("Switched to grid view")
+        self._activate_view_toggle("th-large")
 
     def switch_to_list_view(self):
-        self.click_first_visible(LIST_VIEW_SELECTORS)
+        self._activate_view_toggle("th-list")
+
+    def _listing_view_buttons(self, icon: str):
+        """Partner Spotlight grid/list toggle (excludes cookie-banner controls)."""
+        return self.page.locator(
+            f"button.btn-primary.mask-pii:has(i.fa-{icon}), "
+            f"button.btn:has(i.fa-{icon}):not([class*='category-host']):not([class*='ot-link'])"
+        )
+
+    def _is_view_toggle_active(self, icon: str) -> bool:
+        buttons = self._listing_view_buttons(icon)
+        for i in range(buttons.count()):
+            btn = buttons.nth(i)
+            try:
+                if not btn.is_visible(timeout=1500):
+                    continue
+                class_name = (btn.get_attribute("class") or "").lower()
+                if "category-host" in class_name or "ot-link" in class_name:
+                    continue
+                if "active" in class_name or "selected" in class_name:
+                    return True
+            except PlaywrightTimeoutError:
+                continue
+        return False
+
+    def _activate_view_toggle(self, icon: str):
+        buttons = self._listing_view_buttons(icon)
+        clicked = False
+        for i in range(buttons.count()):
+            btn = buttons.nth(i)
+            try:
+                if btn.is_visible(timeout=2000):
+                    btn.click(timeout=self.timeout)
+                    clicked = True
+                    self.logger.info("Clicked view toggle fa-%s", icon)
+                    break
+            except PlaywrightTimeoutError:
+                continue
+        if not clicked:
+            self.click_first_visible(
+                GRID_VIEW_SELECTORS if icon == "th-large" else LIST_VIEW_SELECTORS
+            )
         self.page.wait_for_timeout(1000)
-        self.logger.info("Switched to list view")
+        for _ in range(8):
+            if self._is_view_toggle_active(icon):
+                self.logger.info("View toggle fa-%s is active", icon)
+                return
+            self.page.wait_for_timeout(400)
+        self.logger.warning("View toggle fa-%s did not show active state", icon)
 
     def _view_button_active(self, selectors):
         for selector in selectors:
-            btn = self.page.locator(selector).first
-            if btn.is_visible(timeout=2000):
-                class_name = btn.get_attribute("class") or ""
-                if "active" in class_name.lower():
-                    return True
+            buttons = self.page.locator(selector)
+            for i in range(buttons.count()):
+                btn = buttons.nth(i)
+                try:
+                    if not btn.is_visible(timeout=1500):
+                        continue
+                    class_name = (btn.get_attribute("class") or "").lower()
+                    if "category-host" in class_name or "ot-link" in class_name:
+                        continue
+                    if "active" in class_name.lower():
+                        return True
+                except PlaywrightTimeoutError:
+                    continue
         return False
 
     def is_grid_view_active(self):
-        if self._view_button_active(GRID_VIEW_SELECTORS):
+        if self._is_view_toggle_active("th-large"):
             return True
-        return self.element_count(".gridview") > 0
+        # Intel site keeps .listview on cards even in grid layout — use toggle state only.
+        return self._view_button_active(GRID_VIEW_SELECTORS)
 
     def is_list_view_active(self):
-        if self._view_button_active(LIST_VIEW_SELECTORS):
+        if self._is_view_toggle_active("th-list"):
             return True
-        return self.element_count(".listview") > 2
+        return self._view_button_active(LIST_VIEW_SELECTORS)
 
     def _sidebar_scope(self):
         sidebar = self.page.locator("[class*='sidebar' i], aside, [class*='filter' i]").first

@@ -9,8 +9,10 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(__file__))
 
 from utilities.config_reader import ConfigReader
+from utilities.excel_report_writer import ExcelReportWriter
 from utilities.logger import get_logger
 from utilities.screenshot_util import ScreenshotUtil
+from utilities.test_result_store import TestResultStore
 from utilities.visual_mode import enable as enable_visual_mode
 
 logger = get_logger("conftest")
@@ -51,6 +53,8 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
+    TestResultStore.reset()
+
     env = config.getoption("--env")
     if env:
         os.environ["TEST_ENV"] = env
@@ -79,6 +83,14 @@ def pytest_configure(config):
     config._metadata = getattr(config, "_metadata", {})
     config._metadata["Environment"] = ConfigReader.get_environment_name()
     config._metadata["Base URL"] = ConfigReader.get("base_url")
+
+    TestResultStore.set_session_meta(
+        run_started=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        environment=ConfigReader.get_environment_name(),
+        base_url=ConfigReader.get("base_url"),
+        html_report=os.path.join(reports_dir, "report.html"),
+        log_file=os.environ.get("TEST_LOG_FILE", ""),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -135,18 +147,60 @@ def env_config():
     return ConfigReader.get_all()
 
 
+def _product_context_from_item(item, product_data=None):
+    product_data = product_data if isinstance(product_data, dict) else {}
+    test_id = str(product_data.get("test_id") or "").strip()
+    partner = str(product_data.get("partner_name") or "").strip()
+    product = str(
+        product_data.get("product_name") or product_data.get("application_name") or ""
+    ).strip()
+    module = "Partner Spotlight" if product_data else "Edge Catalog"
+    if not test_id:
+        name = item.name
+        if "metadata" in name:
+            test_id = "CAT-001"
+        elif "view_toggle" in name:
+            test_id = "CAT-002"
+        elif "search" in name:
+            test_id = "CAT-003"
+        else:
+            test_id = name[:32]
+    return test_id, partner, product, module
+
+
+@pytest.fixture(autouse=True)
+def _excel_report_test_context(request):
+    product_data = {}
+    if "product_data" in request.fixturenames:
+        try:
+            product_data = request.getfixturevalue("product_data") or {}
+        except Exception:
+            product_data = {}
+    test_id, partner, product, module = _product_context_from_item(request.node, product_data)
+    TestResultStore.set_context(
+        test_id=test_id,
+        test_name=request.node.name,
+        module=module,
+        partner=partner,
+        product=product,
+    )
+    yield
+
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     setattr(item, f"rep_{report.when}", report)
 
+    screenshot_path = ""
+
     if report.when == "call" and report.failed:
         page = item.funcargs.get("page")
         if page:
             screenshot_util = ScreenshotUtil(page)
-            path = screenshot_util.capture(name=item.name)
-            logger.error("Test failed — screenshot: %s", path)
+            screenshot_path = screenshot_util.capture(name=item.name)
+            logger.error("Test failed — screenshot: %s", screenshot_path)
 
             try:
                 html = page.content()
@@ -157,4 +211,59 @@ def pytest_runtest_makereport(item, call):
                 )
             except Exception as exc:
                 logger.warning("Could not attach page source: %s", exc)
+
+    if report.when == "setup" and report.failed:
+        product_data = getattr(item, "funcargs", {}).get("product_data") or {}
+        test_id, partner, product, module = _product_context_from_item(item, product_data)
+        failure_msg = str(getattr(report, "longreprtext", report.longrepr))
+        TestResultStore.record_test_outcome(
+            test_id=test_id,
+            test_name=item.name,
+            module=module,
+            partner=partner,
+            product=product,
+            status="ERROR",
+            duration_sec=report.duration,
+            failure_message=failure_msg,
+            screenshot=screenshot_path,
+        )
+        return
+
+    if report.when == "call":
+        product_data = item.funcargs.get("product_data") or {}
+        test_id, partner, product, module = _product_context_from_item(item, product_data)
+        if report.skipped:
+            status = "SKIPPED"
+        elif report.failed:
+            status = "FAILED"
+        elif report.passed:
+            status = "PASSED"
+        else:
+            status = "ERROR"
+
+        failure_msg = ""
+        if report.failed and hasattr(report, "longreprtext"):
+            failure_msg = str(report.longreprtext)
+
+        TestResultStore.record_test_outcome(
+            test_id=test_id,
+            test_name=item.name,
+            module=module,
+            partner=partner,
+            product=product,
+            status=status,
+            duration_sec=report.duration,
+            failure_message=failure_msg,
+            screenshot=screenshot_path,
+        )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    try:
+        excel_path = ExcelReportWriter.write()
+        session.config._excel_report_path = excel_path
+        print(f"\nExcel test report: {excel_path}")
+        print(f"Latest copy: {os.path.join(ConfigReader.get_path('report_path', 'reports'), 'latest_test_results.xlsx')}")
+    except Exception as exc:
+        logger.error("Failed to write Excel report: %s", exc)
 

@@ -67,12 +67,38 @@ def test_partner_spotlight_listing_smoke(page, product_data):
 
     reporter.run(11, "Search product and verify results", lambda: None)
     count = spotlight.search_products(search_term)
+    reporter.record_check(
+        step_num=11,
+        step_title="Search product and verify results",
+        field_name="Search Results",
+        expected=f"> 0 for '{search_term}'",
+        actual=str(count),
+        passed=count > 0,
+    )
     assert count > 0, f"No search results for: {search_term}"
 
     reporter.run(8, "Validate application name on listing", lambda: None)
     ok, msg = spotlight.listing.validate_application_name(product_name)
+    reporter.record_check(
+        step_num=8,
+        step_title="Validate application name on listing",
+        field_name="Application Name",
+        expected=product_name,
+        actual=msg,
+        passed=ok,
+        message=msg,
+    )
     assert ok, msg
 
     reporter.run(13, "Verify Partner Logo on listing page", lambda: None)
     ok, msg, _ = spotlight.listing.validate_partner_logo_on_listing(partner_name)
+    reporter.record_check(
+        step_num=13,
+        step_title="Verify Partner Logo on listing page",
+        field_name="Partner Logo",
+        expected=partner_name,
+        actual=msg,
+        passed=ok,
+        message=msg,
+    )
     assert ok, msg

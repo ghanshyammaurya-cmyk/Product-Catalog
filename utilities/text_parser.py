@@ -36,13 +36,13 @@ def texts_match(expected, actual, min_keyword_ratio=0.5):
 
 
 def parse_expected_features(value):
-    """Parse numbered or newline-separated feature list."""
+    """Parse numbered, newline-, or semicolon-separated feature list."""
     if value is None or str(value).strip() == "" or str(value).lower() == "nan":
         return []
 
     text = str(value).strip()
     features = []
-    for line in text.split("\n"):
+    for line in re.split(r"[\n;]+", text):
         line = line.strip()
         if not line:
             continue
@@ -51,3 +51,50 @@ def parse_expected_features(value):
         if line and len(line) > 3:
             features.append(line)
     return features
+
+
+def feature_on_site(expected_feature: str, haystack: str) -> bool:
+    """Strict check: Excel feature text must appear on the product detail page."""
+    if not expected_feature or not str(expected_feature).strip():
+        return False
+
+    expected = normalize_text(str(expected_feature)).lower()
+    haystack_norm = normalize_text(haystack).lower()
+    if not expected or not haystack_norm:
+        return False
+
+    if expected in haystack_norm:
+        return True
+    if expected.replace(" ", "") in haystack_norm.replace(" ", ""):
+        return True
+
+    words = [
+        w
+        for w in re.findall(r"[a-z0-9]+", expected)
+        if len(w) >= 3 and w not in ("and", "the", "for", "with")
+    ]
+    if words and all(w in haystack_norm for w in words):
+        return True
+
+    return False
+
+
+def parse_expected_contact_fragments(value):
+    """
+    Parse expected_contact_url — mailto, http(s), and domain fragments.
+
+    Examples:
+        mailto:patrick@dynamofl.com
+        mailto:patrick@dynamofl.com; https://www.dynamofl.com/contact
+    """
+    if value is None or str(value).strip() == "" or str(value).lower() == "nan":
+        return []
+
+    text = str(value).strip()
+    fragments = []
+    for part in re.split(r"[\n;|]+", text):
+        for piece in part.split(","):
+            piece = piece.strip()
+            if piece:
+                fragments.append(piece)
+    return fragments
