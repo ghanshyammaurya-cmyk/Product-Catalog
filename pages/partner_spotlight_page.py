@@ -75,9 +75,9 @@ class PartnerSpotlightPage(BasePage):
         )
         if self._product_matches_listing(product_name, short_description):
             badge = self.listing.get_product_type_badge(product_name) or "application"
-            resolved = "application"
+            resolved = badge
             self.logger.info(
-                "Product '%s' resolved as Application (badge: %s)",
+                "Product '%s' resolved from blue listing badge: %s",
                 product_name,
                 self.listing.format_product_type_label(badge),
             )
@@ -89,9 +89,9 @@ class PartnerSpotlightPage(BasePage):
         )
         if self._product_matches_listing(product_name, short_description):
             badge = self.listing.get_product_type_badge(product_name) or "system"
-            resolved = "system" if badge != "application" else "application"
+            resolved = badge
             self.logger.info(
-                "Product '%s' resolved as System (badge: %s)",
+                "Product '%s' resolved from blue listing badge: %s",
                 product_name,
                 self.listing.format_product_type_label(resolved),
             )

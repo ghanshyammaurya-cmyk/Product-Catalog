@@ -365,48 +365,91 @@ class ListingValidator:
             self.page.wait_for_timeout(1000)
 
         card = self.get_listing_card_for_product(product_name)
-        scopes = [card] if card.count() else [self.page]
+        scopes = [card] if card.count() else []
+        product_link = self.page.get_by_role("link", name=product_name, exact=True).first
+        if product_link.count():
+            wider = product_link.locator(
+                "xpath=ancestor::*["
+                "contains(@class,'row') or contains(@class,'card') or "
+                "contains(@class,'product')"
+                "][1]"
+            )
+            if wider.count():
+                scopes.append(wider.first)
+        # Search produces one product in normal execution; global fallback
+        # catches the blue eye icon when it is a sibling outside .listview.
+        scopes.append(self.page)
 
+        clicked = False
         for scope in scopes:
-            for sel in QUICK_VIEW_SELECTORS + ["a[title*='View' i]", "i.fa-eye"]:
+            for sel in QUICK_VIEW_SELECTORS:
                 qv = scope.locator(sel).first
                 try:
                     if qv.count() and qv.is_visible(timeout=2000):
+                        qv.scroll_into_view_if_needed()
                         qv.click()
                         self.page.wait_for_timeout(1500)
+                        clicked = True
                         break
                 except Exception:
                     continue
-            else:
-                continue
-            break
-        else:
+            if clicked:
+                break
+        if not clicked:
             return False, "Quick View icon/link not found"
 
         overlay_text = ""
         for sel in QUICK_VIEW_OVERLAY_SELECTORS:
-            overlay = self.page.locator(sel).first
-            if overlay.count() and overlay.is_visible(timeout=2000):
-                overlay_text = overlay.inner_text(timeout=3000)
+            overlays = self.page.locator(sel)
+            for i in range(overlays.count()):
+                overlay = overlays.nth(i)
+                try:
+                    if overlay.is_visible(timeout=2000):
+                        text = overlay.inner_text(timeout=3000).strip()
+                        tag_name = overlay.evaluate("el => el.tagName.toLowerCase()")
+                        # [class*='quick-view'] also matches the trigger link.
+                        if tag_name in ("a", "button") or text.lower() == "quick view":
+                            continue
+                        if text:
+                            overlay_text = text
+                            break
+                except Exception:
+                    continue
+            if overlay_text:
                 break
 
         if not overlay_text:
-            overlay_text = self.page.inner_text("body")[:500]
+            # Bootstrap popovers can render without a stable wrapper. Validate
+            # the visible page after clicking, not only the first 500 chars.
+            overlay_text = self.page.inner_text("body")
 
         checks = [
             product_name.lower() in overlay_text.lower(),
-            "product detail" in overlay_text.lower(),
-            any(s in overlay_text for s in ["View More", "view more"]),
+            "product details" in overlay_text.lower(),
+            "view more" in overlay_text.lower(),
         ]
         if expected_snippet:
-            checks.append(expected_snippet.lower()[:20] in overlay_text.lower())
+            words = [
+                word.lower().strip(".,;:")
+                for word in expected_snippet.split()
+                if len(word.strip(".,;:")) > 3
+            ]
+            checks.append(
+                bool(words)
+                and sum(word in overlay_text.lower() for word in words)
+                >= max(2, len(words) // 2)
+            )
 
         if any(checks):
             self._close_quick_view()
             return True, "Quick View overlay shows product information"
 
         self._close_quick_view()
-        return False, "Quick View opened but product info not verified"
+        sample = " ".join(overlay_text.split())[:240]
+        return (
+            False,
+            f"Quick View opened but product info not verified. Visible text: {sample}",
+        )
 
     def _close_quick_view(self):
         for sel in [".popover .close", "button.close", "[aria-label='Close']"]:
@@ -429,31 +472,43 @@ class ListingValidator:
         return self.get_listing_card_for_product(product_name).count() > 0
 
     def get_product_type_badge(self, product_name):
-        """Read Application / System badge from listing card (top-right tag)."""
+        """Read the blue top-right Application/System badge from the product card."""
         card = self.get_listing_card_for_product(product_name)
+        scopes = []
         if card.count():
+            scopes.append(card)
+
+        # In list mode the title and the blue badge can be sibling columns, so
+        # the nearest .listview node is occasionally narrower than the card.
+        product_link = self.page.get_by_role("link", name=product_name, exact=True).first
+        if product_link.count():
+            wider = product_link.locator(
+                "xpath=ancestor::*["
+                "contains(@class,'row') or contains(@class,'card') or "
+                "contains(@class,'product')"
+                "][1]"
+            )
+            if wider.count():
+                scopes.append(wider.first)
+
+        for scope in scopes:
             for badge_text in ("Application", "System"):
                 for selector in (
-                    f"xpath=.//*[normalize-space(text())='{badge_text}']",
-                    f".badge:has-text('{badge_text}')",
-                    f"span:has-text('{badge_text}')",
-                    f"div:has-text('{badge_text}')",
+                    f"xpath=.//*[self::span or self::div or self::label]"
+                    f"[normalize-space(.)='{badge_text}']",
+                    f"[class*='badge' i]:text-is('{badge_text}')",
+                    f"[class*='tag' i]:text-is('{badge_text}')",
+                    f"[class*='type' i]:text-is('{badge_text}')",
                 ):
-                    el = card.locator(selector).first
+                    el = scope.locator(selector).first
                     try:
                         if el.count() and el.is_visible(timeout=1000):
                             return badge_text.lower()
                     except Exception:
                         continue
-                text = card.inner_text(timeout=3000)
-                if f"\n{badge_text}\n" in f"\n{text}\n" or text.strip().endswith(badge_text):
-                    return badge_text.lower()
 
-        url = self.page.url.lower()
-        if "type=application" in url:
-            return "application"
-        if "type=system" in url:
-            return "system"
+        # Do not infer the product badge from ?type=. Search can reset tabs and
+        # that caused false "System vs Application" reports.
         return None
 
     def select_product_type(self, product_type="system"):

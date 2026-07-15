@@ -1,6 +1,7 @@
 from playwright.sync_api import Page
 
 import re
+from urllib.parse import unquote, urlsplit
 
 from utilities.constants import (
     CATEGORIES_SECTION_SELECTORS,
@@ -420,36 +421,84 @@ class DetailValidator:
             info,
         )
 
+    @staticmethod
+    def _parse_expected_resource_urls(value):
+        """Parse separate resource URLs from semicolon/newline/pipe-delimited Excel."""
+        if isinstance(value, (list, tuple, set)):
+            parts = [str(item).strip() for item in value]
+        else:
+            parts = re.split(r"[\n;|]+", str(value or ""))
+        return list(dict.fromkeys(part.strip() for part in parts if part.strip()))
+
+    @staticmethod
+    def _resource_urls_match(expected, actual):
+        """Compare resource URLs while tolerating encoding and trailing slash."""
+        expected = unquote(str(expected or "")).strip().lower().rstrip("/")
+        actual = unquote(str(actual or "")).strip().lower().rstrip("/")
+        if not expected or not actual:
+            return False
+        if expected == actual or expected in actual or actual in expected:
+            return True
+        try:
+            exp = urlsplit(expected if "://" in expected else f"https://{expected}")
+            act = urlsplit(actual if "://" in actual else f"https://{actual}")
+            return (
+                exp.netloc.removeprefix("www.") == act.netloc.removeprefix("www.")
+                and exp.path.rstrip("/") == act.path.rstrip("/")
+            )
+        except ValueError:
+            return False
+
     def validate_resources_section(self, expected_url=""):
         links = []
+        seen = set()
         for selector in RESOURCES_SECTION_SELECTORS:
             loc = self.page.locator(selector)
             for i in range(loc.count()):
                 href = loc.nth(i).get_attribute("href") or ""
                 text = loc.nth(i).inner_text(timeout=2000).strip()
-                if href:
+                if href and href not in seen:
+                    seen.add(href)
                     links.append({"text": text, "href": href})
 
-        if expected_url:
-            fragment = expected_url.lower().rstrip("/")
-            for link in links:
-                href = (link.get("href") or "").lower().rstrip("/")
-                if fragment in href or href in fragment:
-                    return True, f"Resource link matches client spec: {link['href']}", links
-            # Also check anywhere on page (resource may be outside Resources block)
+        expected_urls = self._parse_expected_resource_urls(expected_url)
+        if expected_urls:
+            # Resources may render outside the named section, so include all page links.
             body_hrefs = self.page.locator("a[href]").evaluate_all(
                 "els => els.map(e => e.href).filter(Boolean)"
             )
-            for href in body_hrefs:
-                if fragment in href.lower():
-                    return True, f"Resource link found on page: {href}", links
-            if links:
+            all_hrefs = list(
+                dict.fromkeys([link["href"] for link in links] + list(body_hrefs))
+            )
+            found = []
+            missing = []
+            for expected in expected_urls:
+                match = next(
+                    (
+                        href
+                        for href in all_hrefs
+                        if self._resource_urls_match(expected, href)
+                    ),
+                    None,
+                )
+                if match:
+                    found.append({"expected": expected, "actual": match})
+                else:
+                    missing.append(expected)
+
+            if missing:
                 return (
                     False,
-                    f"Expected resource URL not found: {expected_url}. Found: {[l['href'] for l in links[:3]]}",
+                    f"Resource links missing ({len(missing)}/{len(expected_urls)}): "
+                    f"{missing}. Found: {all_hrefs[:5]}",
                     links,
                 )
-            return False, f"Expected resource URL not found: {expected_url}", []
+            return (
+                True,
+                f"All {len(expected_urls)} Application Resource link(s) found: "
+                f"{[item['actual'] for item in found]}",
+                links,
+            )
 
         if links:
             return True, f"Found {len(links)} resource link(s)", links

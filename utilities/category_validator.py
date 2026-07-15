@@ -5,6 +5,7 @@ import re
 from playwright.sync_api import Page
 
 from utilities.constants import CATEGORIES_SECTION_SELECTORS, LISTING_TAG_SELECTORS
+from utilities.category_parser import canonical_subcategory_value
 from utilities.logger import get_logger
 from utilities.text_parser import normalize_text
 
@@ -52,18 +53,32 @@ def subcategory_on_site(expected_subcategory, haystack_normalized, visible_tags=
     expected = str(expected_subcategory).strip()
     norm_expected = normalize_category_text(expected)
     norm_haystack = normalize_category_text(haystack_normalized)
+    canonical_expected = canonical_subcategory_value(expected)
+    norm_canonical = normalize_category_text(canonical_expected)
 
     if norm_expected and norm_expected in norm_haystack:
+        return True
+    if norm_canonical and norm_canonical in norm_haystack:
         return True
 
     # OpenVINO Tool Kit vs OpenVINO Toolkit, etc.
     if norm_expected.replace(" ", "") in norm_haystack.replace(" ", ""):
+        return True
+    if norm_canonical.replace(" ", "") in norm_haystack.replace(" ", ""):
         return True
 
     # Site may use shorter label (e.g. Order Validation vs Order Accuracy)
     aliases = {
         "order accuracy": ["order validation", "order accuracy"],
         "openvino tool kit": ["openvino toolkit", "openvino tool kit"],
+        "health life sciences": [
+            "healthcare and life sciences",
+            "health life sciences",
+        ],
+        "5ht gen intel xeon processors": [
+            "5th gen intel xeon processors",
+            "5ht gen intel xeon processors",
+        ],
         "intel deep learning streamer": [
             "intel deep learning streamer",
             "deep learning streamer",
@@ -96,6 +111,8 @@ def subcategory_on_site(expected_subcategory, haystack_normalized, visible_tags=
         for tag in visible_tags:
             tag_norm = normalize_category_text(tag)
             if norm_expected in tag_norm or tag_norm in norm_expected:
+                return True
+            if norm_canonical in tag_norm or tag_norm in norm_canonical:
                 return True
             if main and normalize_category_text(main) in tag_norm:
                 return True

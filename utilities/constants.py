@@ -75,6 +75,9 @@ QUICK_VIEW_OVERLAY_SELECTORS = [
     ".popover",
     "[class*='popover' i]",
     "[class*='quick-view' i]",
+    "[class*='quickview' i]",
+    ".modal.show",
+    "[role='dialog']",
     "[role='tooltip']",
 ]
 
@@ -116,7 +119,17 @@ PRODUCT_LINK_SELECTORS = [
     "a[href*='/partner-spotlight/'][href*='-']",
     "a:has-text('Product Details')",
 ]
-QUICK_VIEW_SELECTORS = ["a.quick-view", "a:has-text('Quick View')", "a.listview-quick-view"]
+QUICK_VIEW_SELECTORS = [
+    "a.quick-view",
+    "a.listview-quick-view",
+    "a:has-text('Quick View')",
+    "button:has-text('Quick View')",
+    "a:has(i.fa-eye)",
+    "button:has(i.fa-eye)",
+    "[role='button']:has(i.fa-eye)",
+    "[title*='Quick View' i]",
+    "[aria-label*='Quick View' i]",
+]
 
 PARTNER_LOGO_LISTING_SELECTORS = ["img[src*='companyLogo' i]", "img[src*='images/company' i]"]
 PARTNER_LOGO_SELECTORS = PARTNER_LOGO_LISTING_SELECTORS + ["[class*='product' i] img", "[class*='partner' i] img"]

@@ -11,6 +11,8 @@ TICKET_SECTION_HEADERS = {
     "open software platform",
     "intel technologies",
     "intel technologies and platforms",
+    "intel processors",
+    "intel graphics",
     "geo availability",
     "geographical availability",
     "target audience",
@@ -29,10 +31,54 @@ SIDEBAR_FILTER_SECTIONS = {
     "intel open software platform",
     "intel technologies",
     "intel technologies and platforms",
+    "intel processors",
+    "intel graphics",
     "geo availability",
     "geographical availability",
     "target audience",
 }
+
+# Ticket wording may differ from the current Partner Spotlight UI. Preserve the
+# ticket text in Excel/reporting, but use these canonical labels for UI actions.
+_SECTION_ALIASES = {
+    "intel processors": "Intel Technologies and Platforms",
+    "intel graphics": "Intel Technologies and Platforms",
+    "intel technologies": "Intel Technologies and Platforms",
+    "intel technologies and platforms": "Intel Technologies and Platforms",
+}
+
+_VALUE_ALIASES = {
+    "health & life sciences": "Healthcare and Life Sciences",
+    "health life sciences": "Healthcare and Life Sciences",
+    "health and life sciences": "Healthcare and Life Sciences",
+    "openvino tool kit": "OpenVINO™ Toolkit",
+    "openvino toolkit": "OpenVINO™ Toolkit",
+}
+
+
+def canonical_section_name(section_name):
+    """Map ticket category headings to current site sidebar headings."""
+    text = normalize_ticket_text(section_name).strip()
+    return _SECTION_ALIASES.get(text.lower(), text)
+
+
+def canonical_subcategory_value(value):
+    """Map ticket sub-category spelling/trademark variants to current site labels."""
+    text = normalize_ticket_text(value).strip()
+    key = text.lower().replace("®", "").replace("™", "")
+    key = re.sub(r"\s+", " ", key)
+
+    # Common ticket typo: "5ht Gen" should match site's "5th Gen".
+    key = re.sub(r"\b5ht\s+gen\b", "5th gen", key)
+    text = re.sub(r"\b5ht\s+Gen\b", "5th Gen", text, flags=re.I)
+
+    if key in _VALUE_ALIASES:
+        return _VALUE_ALIASES[key]
+
+    # Current site includes Intel trademarks in platform values.
+    text = re.sub(r"\bIntel\s+Core\s+Ultra\b", "Intel® Core™ Ultra", text, flags=re.I)
+    text = re.sub(r"\bIntel\s+Arc\b", "Intel® Arc™", text, flags=re.I)
+    return text
 
 
 def normalize_ticket_text(value):
@@ -143,7 +189,7 @@ def sidebar_section_label(section_name):
         "vertical": "Verticals",
         "verticals": "Verticals",
     }
-    return aliases.get(key, section_name.strip())
+    return aliases.get(key, canonical_section_name(section_name))
 
 
 def parse_sidebar_filter_sections(value, values_per_section=None):
@@ -190,7 +236,7 @@ def parse_sidebar_filter_sections(value, values_per_section=None):
             {
                 "section": sec["section"],
                 "sidebar_label": sidebar_section_label(sec["section"]),
-                "values": values,
+                "values": [canonical_subcategory_value(value) for value in values],
             }
         )
     return sidebar_sections

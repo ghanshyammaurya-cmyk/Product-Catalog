@@ -453,14 +453,19 @@ class PartnerSpotlight26StepFlow:
 
             if spotlight.listing.is_product_listed(self.product_name):
                 ok = True
-                actual_type = ptype
+                actual_type = (
+                    spotlight.listing.get_product_type_badge(self.product_name) or ptype
+                )
                 break
 
             if self.search_term:
                 self._search_with_filters(spotlight, ptype)
                 if spotlight.listing.is_product_listed(self.product_name):
                     ok = True
-                    actual_type = ptype
+                    actual_type = (
+                        spotlight.listing.get_product_type_badge(self.product_name)
+                        or ptype
+                    )
                     break
 
         if not ok:
