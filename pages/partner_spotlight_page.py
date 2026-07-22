@@ -4,6 +4,8 @@ from utilities.constants import PRODUCT_LINK_SELECTORS, PRODUCT_TITLE_SELECTORS
 from utilities.listing_validator import ListingValidator
 from utilities.logo_validator import LogoValidator
 
+import re
+
 
 class PartnerSpotlightPage(BasePage):
     def __init__(self, page):
@@ -148,6 +150,90 @@ class PartnerSpotlightPage(BasePage):
     def search_products(self, term):
         self.catalog_search(term)
         return self.get_product_link_count()
+
+    @staticmethod
+    def search_term_variants(term, product_name=""):
+        """Build alternate search strings for dotted names like HawkEye2.0."""
+        variants = []
+        for value in (term, product_name):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            variants.append(text)
+            # HawkEye2.0 -> HawkEye 2.0
+            spaced = re.sub(r"(?<=\D)(\d+(?:\.\d+)?)$", r" \1", text)
+            spaced = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", spaced)
+            variants.append(spaced.strip())
+            # HawkEye2.0 -> HawkEye
+            base = re.split(r"[\d._\-]+", text, maxsplit=1)[0].strip()
+            if base and len(base) >= 4:
+                variants.append(base)
+            # Remove periods: HawkEye2.0 -> HawkEye20 / HawkEye2
+            variants.append(text.replace(".", ""))
+            variants.append(re.sub(r"\.\d+$", "", text))
+        # Deduplicate preserving order
+        seen = set()
+        out = []
+        for item in variants:
+            key = item.lower()
+            if item and key not in seen:
+                seen.add(key)
+                out.append(item)
+        return out
+
+    def find_product_with_search(self, product_name, search_term="", partner_name=None):
+        """
+        Locate a product card using partner filter + search variants.
+        Returns (found, result_count, used_term).
+        """
+        term = (search_term or product_name or "").strip()
+        if partner_name:
+            self.select_partner(partner_name, search_hint=partner_name)
+            self.page.wait_for_timeout(1500)
+            self.wait_for_listing_results(product_name=product_name, timeout_ms=12000)
+            if self.listing.is_product_listed(product_name):
+                return True, self.get_product_link_count(), "partner-filter"
+
+        for variant in self.search_term_variants(term, product_name):
+            # Prefer URL search — more reliable than typing for names with '.' 
+            if self._search_via_url(variant):
+                count = self.get_product_link_count()
+                if self.listing.is_product_listed(product_name) or count > 0:
+                    if self.listing.is_product_listed(product_name):
+                        return True, count, variant
+            self.catalog_search(variant)
+            count = self.get_product_link_count()
+            if self.listing.is_product_listed(product_name):
+                return True, max(count, 1), variant
+            # Soft acceptance: visible substring of product name in a card
+            soft = re.split(r"[\d._\-]+", product_name)[0].strip()
+            if soft and self.page.get_by_text(soft, exact=False).count():
+                if self.listing.validate_application_name(product_name)[0]:
+                    return True, max(count, 1), variant
+        return False, 0, term
+
+    def _search_via_url(self, term):
+        """Apply pSearch via navigation while preserving current product type."""
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+        term = (term or "").strip()
+        if not term:
+            return False
+        current = urlparse(self.page.url)
+        query = parse_qs(current.query)
+        query["pSearch"] = [term]
+        new_query = urlencode(query, doseq=True)
+        target = urlunparse(
+            (current.scheme, current.netloc, current.path, current.params, new_query, "")
+        )
+        try:
+            self.navigate_to(target)
+            self.accept_cookies_if_present()
+            self.wait_for_page_load()
+            self.wait_for_listing_results(product_name=term, timeout_ms=20000)
+            return True
+        except Exception:
+            return False
 
     def get_product_link_count(self):
         return self.listing.get_search_result_count()

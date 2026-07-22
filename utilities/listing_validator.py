@@ -71,21 +71,67 @@ class ListingValidator:
     def get_search_result_count(self):
         """
         Count visible search/listing results (one per product card).
-        Prefer the catalog header; raw link counts over-count (title + details + quick view).
-        """
-        catalog_count = self.get_catalog_product_count()
-        if catalog_count is not None:
-            return catalog_count
 
+        Never trust the catalog header alone while a search is active — the
+        header can stay at a stale total (e.g. 96) while skeleton loaders show.
+        """
         details_links = self.page.locator("a:has-text('Product Details')")
         detail_urls = self._unique_product_urls_from_links(details_links)
         if detail_urls:
             return len(detail_urls)
 
+        # Visible product title links that point at a product slug.
         product_urls = self._unique_product_urls_from_links(
             self.page.locator("a[href*='/partner-spotlight/'][href*='-']")
         )
-        return len(product_urls)
+        if product_urls:
+            return len(product_urls)
+
+        # During / after search, skeleton rows mean "0 loaded results".
+        if "psearch=" in (self.page.url or "").lower() or self._has_listing_skeletons():
+            return 0
+
+        catalog_count = self.get_catalog_product_count()
+        if catalog_count is not None:
+            return catalog_count
+        return 0
+
+    def _has_listing_skeletons(self):
+        """True when listing shows placeholder cards instead of real products."""
+        details = self.page.locator("a:has-text('Product Details')")
+        try:
+            if details.count() > 0 and details.first.is_visible(timeout=500):
+                return False
+        except Exception:
+            pass
+
+        for selector in (
+            "[class*='skeleton' i]",
+            "[class*='placeholder' i]",
+            "[class*='shimmer' i]",
+            "[class*='loading' i]",
+        ):
+            loc = self.page.locator(selector)
+            try:
+                if loc.count() >= 2:
+                    return True
+            except Exception:
+                continue
+
+        # Gray placeholder cards typically have .listview/.gridview but no product text.
+        cards = self.page.locator(LISTING_CARD_SELECTOR)
+        try:
+            visible_cards = min(cards.count(), 6)
+            emptyish = 0
+            for i in range(visible_cards):
+                text = (cards.nth(i).inner_text(timeout=500) or "").strip()
+                if len(text) < 8:
+                    emptyish += 1
+            if visible_cards >= 3 and emptyish >= 2:
+                return True
+        except Exception:
+            pass
+        return False
 
     def validate_listing_category_subcategory_strict(self, product_name, category_pairs):
         """Strict Excel vs site on Partner Spotlight listing page."""
@@ -233,7 +279,7 @@ class ListingValidator:
         return False, "No product listing displayed", 0
 
     def get_listing_card_for_product(self, product_name):
-        link = self.page.get_by_role("link", name=product_name, exact=True)
+        link = self._product_title_link(product_name)
         if link.count():
             card = link.locator(
                 "xpath=ancestor::*[contains(@class,'listview') or contains(@class,'gridview')][1]"
@@ -241,12 +287,40 @@ class ListingValidator:
             if card.count():
                 return card.first
 
+        safe = str(product_name).replace("\\", "\\\\").replace("'", "\\'")
         card = self.page.locator(
-            f"{LISTING_CARD_SELECTOR}:has(a:has-text('{product_name}'))"
+            f"{LISTING_CARD_SELECTOR}:has(a:text-is('{safe}'))"
         ).first
         if card.count() == 0:
-            card = self.page.locator(LISTING_CARD_SELECTOR).filter(has_text=product_name).first
+            card = self.page.locator(
+                f"{LISTING_CARD_SELECTOR}:has(a:has-text('{safe}'))"
+            ).first
+        if card.count() == 0:
+            card = self.page.locator(LISTING_CARD_SELECTOR).filter(
+                has_text=re.compile(re.escape(str(product_name)), re.I)
+            ).first
         return card
+
+    def _product_title_link(self, product_name):
+        """Locate product title; supports names with periods (e.g. HawkEye2.0)."""
+        name = str(product_name or "").strip()
+        if not name:
+            return self.page.locator("a").nth(-1)
+
+        link = self.page.get_by_role("link", name=name, exact=True)
+        if link.count():
+            return link.first
+
+        safe = name.replace("\\", "\\\\").replace("'", "\\'")
+        link = self.page.locator(f"a:text-is('{safe}')")
+        if link.count():
+            return link.first
+
+        link = self.page.get_by_role("link", name=re.compile(rf"^{re.escape(name)}$"))
+        if link.count():
+            return link.first
+
+        return self.page.get_by_text(name, exact=True).first
 
     @staticmethod
     def format_product_type_label(product_type):
@@ -278,12 +352,27 @@ class ListingValidator:
         return False, f"Product type badge not found (expected {label})", None
 
     def validate_application_name(self, product_name):
+        link = self._product_title_link(product_name)
+        try:
+            if link.count() and link.is_visible(timeout=3000):
+                return True, f"Application name found: {product_name}"
+        except Exception:
+            pass
+
         card = self.get_listing_card_for_product(product_name)
-        link = self.page.get_by_role("link", name=product_name, exact=True)
-        if link.count() > 0:
-            return True, f"Application name found: {product_name}"
-        if card.count() and product_name.lower() in card.inner_text(timeout=5000).lower():
-            return True, f"Application name found in card: {product_name}"
+        try:
+            if card.count() and product_name.lower() in card.inner_text(timeout=5000).lower():
+                return True, f"Application name found in card: {product_name}"
+        except Exception:
+            pass
+
+        try:
+            text_node = self.page.get_by_text(product_name, exact=True).first
+            if text_node.count() and text_node.is_visible(timeout=2000):
+                return True, f"Application name found on page: {product_name}"
+        except Exception:
+            pass
+
         return False, f"Application name not found: {product_name}"
 
     def validate_short_description(self, product_name, expected_snippet=""):
@@ -366,7 +455,7 @@ class ListingValidator:
 
         card = self.get_listing_card_for_product(product_name)
         scopes = [card] if card.count() else []
-        product_link = self.page.get_by_role("link", name=product_name, exact=True).first
+        product_link = self._product_title_link(product_name)
         if product_link.count():
             wider = product_link.locator(
                 "xpath=ancestor::*["
@@ -463,13 +552,17 @@ class ListingValidator:
         self.page.keyboard.press("Escape")
 
     def is_product_listed(self, product_name):
-        link = self.page.get_by_role("link", name=product_name, exact=True)
-        if link.count():
-            try:
-                return link.first.is_visible(timeout=3000)
-            except Exception:
-                pass
-        return self.get_listing_card_for_product(product_name).count() > 0
+        link = self._product_title_link(product_name)
+        try:
+            if link.count() and link.is_visible(timeout=3000):
+                return True
+        except Exception:
+            pass
+        card = self.get_listing_card_for_product(product_name)
+        try:
+            return card.count() > 0 and card.is_visible(timeout=2000)
+        except Exception:
+            return card.count() > 0
 
     def get_product_type_badge(self, product_name):
         """Read the blue top-right Application/System badge from the product card."""
@@ -480,7 +573,7 @@ class ListingValidator:
 
         # In list mode the title and the blue badge can be sibling columns, so
         # the nearest .listview node is occasionally narrower than the card.
-        product_link = self.page.get_by_role("link", name=product_name, exact=True).first
+        product_link = self._product_title_link(product_name)
         if product_link.count():
             wider = product_link.locator(
                 "xpath=ancestor::*["

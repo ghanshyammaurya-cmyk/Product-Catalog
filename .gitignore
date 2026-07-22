@@ -59,6 +59,7 @@ reports/
 screenshots/
 downloads/*
 !downloads/.gitkeep
+qa_tool/data/
 
 # Allure
 allure-results/

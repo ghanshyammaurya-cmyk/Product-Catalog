@@ -102,11 +102,61 @@ class BasePage:
         field = self.fill_first_visible(CATALOG_SEARCH_SELECTORS, term)
         if submit:
             field.press("Enter")
+            # Also click the blue search icon when present (more reliable than Enter alone).
+            for selector in (
+                "button:has(i.fa-search)",
+                "button[type='submit']:has(i.fa-search)",
+                ".input-group-append button",
+                "button.btn:has(i.fa-search)",
+            ):
+                btn = self.page.locator(selector).first
+                try:
+                    if btn.is_visible(timeout=1000):
+                        btn.click()
+                        break
+                except Exception:
+                    continue
         self.page.wait_for_timeout(2000)
         self.wait_for_page_load()
+        # Wait until listing cards render (avoid validating against skeleton placeholders).
+        self.wait_for_listing_results(product_name=term, timeout_ms=25000)
         self.auto_slow_scroll_if_visual()
         self.logger.info("Catalog search for: %s", term)
         return field
+
+    def wait_for_listing_results(self, product_name="", timeout_ms=15000):
+        """Wait for real listing content after search/filter (not skeleton loaders)."""
+        import time
+
+        end = time.time() + (timeout_ms / 1000.0)
+        product_name = (product_name or "").strip()
+        while time.time() < end:
+            try:
+                if product_name:
+                    title = self.page.get_by_text(product_name, exact=True).first
+                    if title.count() and title.is_visible(timeout=500):
+                        return True
+                    # Soft match for dotted names like HawkEye2.0 → HawkEye
+                    soft = re.sub(r"[\.\-_]+", " ", product_name).strip()
+                    tokens = [t for t in soft.split() if len(t) >= 4]
+                    if tokens:
+                        soft_title = self.page.get_by_text(tokens[0], exact=False).first
+                        if soft_title.count() and soft_title.is_visible(timeout=500):
+                            # Only accept if Product Details also appeared (real card).
+                            details = self.page.locator("a:has-text('Product Details')").first
+                            if details.count() and details.is_visible(timeout=500):
+                                return True
+                    safe = product_name.replace("\\", "\\\\").replace("'", "\\'")
+                    link = self.page.locator(f"a:text-is('{safe}')").first
+                    if link.count() and link.is_visible(timeout=500):
+                        return True
+                details = self.page.locator("a:has-text('Product Details')").first
+                if details.count() and details.is_visible(timeout=500):
+                    return True
+            except Exception:
+                pass
+            self.page.wait_for_timeout(500)
+        return False
 
     def clear_catalog_search(self):
         for selector in CATALOG_SEARCH_SELECTORS:

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Intel Edge AI QA Automation Tool">
+  <title>EdgeQA Automation Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">EQ</div>
+      <div>
+        <strong>EdgeQA</strong>
+        <span>Automation Console</span>
+      </div>
+    </div>
+    <nav aria-label="Main navigation">
+      <button class="nav-item active" data-page="dashboard">
+        <span class="nav-icon">⌂</span><span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-page="runs">
+        <span class="nav-icon">▶</span><span>Test Runs</span>
+      </button>
+      <button class="nav-item" data-page="data">
+        <span class="nav-icon">▦</span><span>Test Data</span>
+      </button>
+      <button class="nav-item" data-page="environments">
+        <span class="nav-icon">◎</span><span>Environments</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="health-dot"></div>
+      <div><strong>Local service</strong><span id="serviceStatus">Connecting…</span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="mobile-menu" id="mobileMenu" aria-label="Open navigation">☰</button>
+      <div>
+        <p class="eyebrow">INTEL EDGE AI</p>
+        <h1 id="pageTitle">Automation Dashboard</h1>
+      </div>
+      <div class="top-actions">
+        <button class="btn ghost" id="refreshButton">↻ Refresh</button>
+        <button class="btn primary" data-action="new-run">＋ New Test Run</button>
+      </div>
+    </header>
+
+    <section class="page active" id="page-dashboard">
+      <div class="hero">
+        <div>
+          <span class="hero-kicker">Quality at every environment</span>
+          <h2>Run, monitor, and report with confidence.</h2>
+          <p>Launch Playwright automation against Demo, QA, or Live. Review results and maintain Excel test data from one place.</p>
+        </div>
+        <button class="btn light" data-action="new-run">Launch automation →</button>
+      </div>
+
+      <div class="metrics" id="metrics">
+        <article class="metric"><span>Enabled products</span><strong id="metricProducts">—</strong><small>Excel-driven test cases</small></article>
+        <article class="metric"><span>Total runs</span><strong id="metricRuns">—</strong><small>Dashboard history</small></article>
+        <article class="metric"><span>Passed runs</span><strong id="metricPassed">—</strong><small>Successful executions</small></article>
+        <article class="metric"><span>Failed runs</span><strong id="metricFailed">—</strong><small>Requires attention</small></article>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <div class="card-head">
+            <div><p class="eyebrow">RECENT ACTIVITY</p><h3>Latest test runs</h3></div>
+            <button class="link-button" data-page-link="runs">View all</button>
+          </div>
+          <div id="recentRuns" class="run-list skeleton-block">Loading run history…</div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <div><p class="eyebrow">TARGETS</p><h3>Environment readiness</h3></div>
+            <button class="link-button" data-page-link="environments">Details</button>
+          </div>
+          <div id="environmentMini" class="environment-mini skeleton-block">Loading environments…</div>
+        </article>
+      </div>
+
+      <article class="card console-card" id="activeConsoleCard">
+        <div class="card-head">
+          <div><p class="eyebrow">LIVE EXECUTION</p><h3 id="consoleTitle">No active run</h3></div>
+          <div class="inline-actions">
+            <span class="status neutral" id="consoleStatus">IDLE</span>
+            <button class="btn danger small hidden" id="cancelRun">Cancel run</button>
+          </div>
+        </div>
+        <pre id="liveConsole">Start a test run to see live pytest and Playwright output here.</pre>
+      </article>
+    </section>
+
+    <section class="page" id="page-runs">
+      <div class="section-toolbar">
+        <div><p class="section-copy">Immutable run history, live logs, and downloadable artifacts.</p></div>
+        <button class="btn primary" data-action="new-run">＋ Run tests</button>
+      </div>
+      <article class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Run</th><th>Environment</th><th>Suite</th><th>Browser</th><th>Started</th><th>Status</th><th></th></tr></thead>
+            <tbody id="runsTable"><tr><td colspan="7">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+      <article class="card run-detail hidden" id="runDetail">
+        <div class="card-head">
+          <div><p class="eyebrow">RUN DETAIL</p><h3 id="detailTitle"></h3></div>
+          <span class="status" id="detailStatus"></span>
+        </div>
+        <div class="detail-grid" id="detailMeta"></div>
+        <h4>Artifacts</h4>
+        <div class="artifact-list" id="artifactList"></div>
+        <h4>Console output</h4>
+        <pre id="detailConsole"></pre>
+      </article>
+    </section>
+
+    <section class="page" id="page-data">
+      <div class="section-toolbar">
+        <div>
+          <p class="section-copy">Manage <code>partner_products.xlsx</code>. Saves are validated, backed up, and atomic.</p>
+          <span class="muted" id="dataSummary"></span>
+        </div>
+        <div class="inline-actions">
+          <button class="btn ghost" id="enableAll">Enable all</button>
+          <button class="btn ghost" id="disableAll">Disable all</button>
+          <button class="btn ghost" id="addDataRow">＋ Add product</button>
+          <button class="btn primary" id="saveData">Save changes</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <input id="dataSearch" type="search" placeholder="Search test ID, ticket, partner, or product…">
+        <select id="dataEnabledFilter"><option value="all">All rows</option><option value="enabled">Enabled only</option><option value="disabled">Disabled only</option></select>
+      </div>
+      <article class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Enabled</th><th>Test ID</th><th>Ticket</th><th>Partner</th><th>Product</th><th>Type</th><th></th></tr></thead>
+            <tbody id="dataTable"><tr><td colspan="7">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="page" id="page-environments">
+      <p class="section-copy">Public names map to the existing framework configs: Demo → dev, QA → staging, Live → prod.</p>
+      <div class="environment-grid" id="environmentCards"></div>
+      <article class="notice">
+        <strong>Safe execution model</strong>
+        <p>Only one run executes at a time to protect shared Playwright and report resources. Live is visually marked and must be explicitly selected.</p>
+      </article>
+    </section>
+  </main>
+
+  <div class="modal-backdrop hidden" id="runModal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+    <div class="modal">
+      <div class="modal-head"><div><p class="eyebrow">NEW EXECUTION</p><h2 id="runModalTitle">Configure test run</h2></div><button class="icon-button" data-close="runModal">×</button></div>
+      <form id="runForm">
+        <label>Environment</label>
+        <div class="environment-picker">
+          <label><input type="radio" name="environment" value="demo"><span><b>Demo</b><small>Development server</small></span></label>
+          <label><input type="radio" name="environment" value="qa" checked><span><b>QA</b><small>Test server</small></span></label>
+          <label class="live-option"><input type="radio" name="environment" value="live"><span><b>Live</b><small>Production server</small></span></label>
+        </div>
+        <div class="form-grid">
+          <label>Test suite<select name="suite"><option value="smoke">Smoke — quick confidence</option><option value="catalog">Catalog only</option><option value="partner">Partner Spotlight</option><option value="regression">Regression</option><option value="full">Full suite</option></select></label>
+          <label>Browser<select name="browser"><option value="chromium">Chromium</option><option value="firefox">Firefox</option><option value="webkit">WebKit</option></select></label>
+          <label>Specific Test ID<input name="test_id" placeholder="Optional, e.g. PS-005"></label>
+          <label>Slow motion (ms)<input name="slow_mo" type="number" value="500" min="0" max="5000"></label>
+        </div>
+        <label class="toggle-row"><input type="checkbox" name="headed"><span class="toggle"></span><span><b>Visible browser</b><small>Show Playwright execution on this desktop</small></span></label>
+        <div class="live-warning hidden" id="liveWarning">You selected Live. This will execute automation against the production URL.</div>
+        <div class="modal-actions"><button type="button" class="btn ghost" data-close="runModal">Cancel</button><button type="submit" class="btn primary">Start test run</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="dataModal" role="dialog" aria-modal="true" aria-labelledby="dataModalTitle">
+    <div class="modal wide">
+      <div class="modal-head"><div><p class="eyebrow">EXCEL TEST DATA</p><h2 id="dataModalTitle">Edit product</h2></div><button class="icon-button" data-close="dataModal">×</button></div>
+      <form id="dataForm"><div class="data-form-grid" id="dataFields"></div><div class="modal-actions"><button type="button" class="btn ghost" data-close="dataModal">Cancel</button><button type="submit" class="btn primary">Apply row changes</button></div></form>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toasts" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

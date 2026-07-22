@@ -60,25 +60,42 @@ def test_partner_spotlight_listing_smoke(page, product_data):
     product_name = get_str(product_data, "product_name")
     search_term = get_str(product_data, "search_term") or product_name
     partner_name = get_str(product_data, "partner_name")
+    partner_dropdown = get_str(product_data, "partner_dropdown_label") or partner_name
+    product_type = get_str(product_data, "product_type", "application")
     reporter = StepReporter(page, test_id)
 
     spotlight = PartnerSpotlightPage(page)
-    spotlight.open()
+    # Open on Application/System tab from Excel — HawkEye2.0 is Application.
+    spotlight.open(product_type=product_type)
 
     reporter.run(11, "Search product and verify results", lambda: None)
-    count = spotlight.search_products(search_term)
+    found, count, used_term = spotlight.find_product_with_search(
+        product_name=product_name,
+        search_term=search_term,
+        partner_name=partner_dropdown or partner_name,
+    )
     reporter.record_check(
         step_num=11,
         step_title="Search product and verify results",
         field_name="Search Results",
-        expected=f"> 0 for '{search_term}'",
-        actual=str(count),
-        passed=count > 0,
+        expected=f"> 0 for '{product_name}'",
+        actual=f"count={count}, via='{used_term}', found={found}",
+        passed=found or count > 0,
     )
-    assert count > 0, f"No search results for: {search_term}"
+    assert found or count > 0, (
+        f"No search results for: {product_name} (tried '{used_term}')"
+    )
 
     reporter.run(8, "Validate application name on listing", lambda: None)
     ok, msg = spotlight.listing.validate_application_name(product_name)
+    if not ok and not found:
+        # One more attempt after partner + URL search for dotted product names.
+        found, count, used_term = spotlight.find_product_with_search(
+            product_name=product_name,
+            search_term=search_term,
+            partner_name=partner_dropdown or partner_name,
+        )
+        ok, msg = spotlight.listing.validate_application_name(product_name)
     reporter.record_check(
         step_num=8,
         step_title="Validate application name on listing",
