@@ -319,37 +319,82 @@ class BasePage:
         return False
 
     def _try_select_checkbox(self, value, section_name=None):
-        """Try once to check a sidebar value (exact or partial label match)."""
+        """Try once to check a sidebar value with strict label matching."""
         name = str(value).strip()
+        if not name:
+            return False
+
+        from utilities.category_parser import canonical_subcategory_value
+        from utilities.category_validator import normalize_category_text
+
+        target = canonical_subcategory_value(name) or name
+        target_norm = normalize_category_text(target)
         scope = self._sidebar_scope()
-        needles = [name]
-        if len(name) > 24:
-            needles.append(name[:24])
 
-        for needle in needles:
-            try:
-                checkbox = self.page.get_by_role(
-                    "checkbox", name=re.compile(re.escape(needle), re.I)
-                )
-                if checkbox.count():
-                    box = checkbox.first
-                    box.scroll_into_view_if_needed()
-                    if not box.is_checked():
-                        box.check(timeout=5000)
-                    self.page.wait_for_timeout(800)
-                    return True
-            except Exception:
-                pass
+        # Prefer exact accessible-name / exact label text. Never use short prefixes —
+        # that caused Ultra Series 3 to select "Core processors (Series 3)".
+        candidates = []
+        try:
+            role_boxes = self.page.get_by_role("checkbox")
+            for i in range(min(role_boxes.count(), 200)):
+                box = role_boxes.nth(i)
+                try:
+                    accessible = (box.get_attribute("aria-label") or "").strip()
+                    if not accessible:
+                        # Playwright accessible name often comes from associated label.
+                        accessible = box.evaluate(
+                            """el => {
+                                if (el.labels && el.labels.length) return el.labels[0].innerText;
+                                const id = el.id;
+                                if (id) {
+                                  const lab = document.querySelector(`label[for="${id}"]`);
+                                  if (lab) return lab.innerText;
+                                }
+                                return el.parentElement ? el.parentElement.innerText : '';
+                            }"""
+                        ) or ""
+                    candidates.append((box, str(accessible).strip()))
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-            label = scope.locator("label").filter(
-                has_text=re.compile(re.escape(needle), re.I)
-            ).first
+        labels = scope.locator("label")
+        try:
+            for i in range(min(labels.count(), 200)):
+                lab = labels.nth(i)
+                try:
+                    text = (lab.inner_text(timeout=500) or "").strip()
+                    if text:
+                        candidates.append((lab, text))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        def _is_exact_label(label_text):
+            # Strip trailing counts like "(1)" from sidebar labels.
+            label_norm = normalize_category_text(label_text)
+            label_norm = re.sub(r"\s*\(\d+\)\s*$", "", label_norm).strip()
+            target_clean = re.sub(r"\s*\(\d+\)\s*$", "", target_norm).strip()
+            if label_norm == target_clean:
+                return True
+            return label_norm.replace(" ", "") == target_clean.replace(" ", "")
+
+        for locator, label_text in candidates:
+            if not _is_exact_label(label_text):
+                continue
             try:
-                if label.is_visible(timeout=2000):
-                    label.scroll_into_view_if_needed()
-                    label.click(timeout=5000)
-                    self.page.wait_for_timeout(800)
-                    return True
+                locator.scroll_into_view_if_needed()
+                # Checkbox input vs label click
+                role = locator.evaluate("el => el.getAttribute('type') || el.tagName")
+                if str(role).lower() == "checkbox":
+                    if not locator.is_checked():
+                        locator.check(timeout=5000)
+                else:
+                    locator.click(timeout=5000)
+                self.page.wait_for_timeout(800)
+                return True
             except Exception:
                 continue
 
@@ -376,10 +421,8 @@ class BasePage:
                 self._scroll_sidebar()
                 self.page.wait_for_timeout(600)
 
-        if self.select_filter(name):
-            self.logger.info("Selected filter (fallback): %s", name)
-            return True
-
+        # Do not fall back to loose select_filter() for category values —
+        # partial text matching selected wrong Intel SKUs (Ultra Series 3 vs Series 3).
         self.logger.warning("Sub-category not found in sidebar: %s", name)
         return False
 

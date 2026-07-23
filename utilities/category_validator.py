@@ -28,11 +28,15 @@ def normalize_category_text(text):
     """Normalize for comparison (unicode, trademarks, whitespace)."""
     if not text:
         return ""
-    value = normalize_text(str(text))
+    value = str(text)
     for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\xa0", "\ufffd"):
         value = value.replace(ch, " ")
-    value = re.sub(r"[®™]", "", value)
+    # Strip marks before general normalize so "™" does not become "tm".
+    value = value.replace("®", "").replace("™", "").replace("(R)", "").replace("(TM)", "")
+    value = normalize_text(value)
     value = re.sub(r"[^\w\s,()/\-]", " ", value)
+    # Drop leftover trademark letter artifacts from some paste encodings.
+    value = re.sub(r"\b(?:tm|r)\b", " ", value, flags=re.I)
     value = re.sub(r"\s+", " ", value).strip().lower()
     return value
 
@@ -42,10 +46,66 @@ def _significant_words(text, min_len=3):
     return [w for w in words if len(w) >= min_len and w not in ("and", "the", "for", "gen")]
 
 
+def _intel_processor_signature(text):
+    """
+    Distinguishing tokens for Intel processor/platform labels.
+
+    'Intel® Core™ Ultra Series 3 processors'  → ultra + series 3
+    'Intel® Core™ processors (Series 3)'      → series 3 (no ultra)
+    These must NOT match each other.
+    """
+    norm = normalize_category_text(text)
+    if not norm:
+        return None
+    if "processor" not in norm and "graphics" not in norm and "xeon" not in norm:
+        return None
+
+    series = re.search(r"series\s*(\d+)", norm)
+    gen = re.search(r"(\d+)\s*(?:th|st|nd|rd)?\s*gen", norm)
+    return {
+        "ultra": "ultra" in norm,
+        "arc": "arc" in norm,
+        "xeon": "xeon" in norm,
+        "core": "core" in norm,
+        "graphics": "graphics" in norm,
+        "series": series.group(1) if series else None,
+        "gen": gen.group(1) if gen else None,
+        "norm": norm,
+    }
+
+
+def _compatible_intel_signatures(expected_sig, site_text):
+    """Return False when site label is a different Intel SKU than Excel expects."""
+    if not expected_sig:
+        return True
+    site_sig = _intel_processor_signature(site_text)
+    if not site_sig:
+        return False
+
+    # Ultra vs non-Ultra is always a hard mismatch.
+    if expected_sig["ultra"] != site_sig["ultra"]:
+        return False
+    if expected_sig["arc"] != site_sig["arc"] and (expected_sig["arc"] or site_sig["graphics"]):
+        # Expected Arc graphics must see Arc on site.
+        if expected_sig["arc"] and not site_sig["arc"]:
+            return False
+    if expected_sig["series"] and site_sig["series"] and expected_sig["series"] != site_sig["series"]:
+        return False
+    if expected_sig["gen"] and site_sig["gen"] and expected_sig["gen"] != site_sig["gen"]:
+        return False
+    # Expected Ultra Series N must include both ultra and series N on site.
+    if expected_sig["ultra"] and expected_sig["series"]:
+        if not site_sig["ultra"] or site_sig["series"] != expected_sig["series"]:
+            return False
+    return True
+
+
 def subcategory_on_site(expected_subcategory, haystack_normalized, visible_tags=None):
     """
     Return True if Excel sub-category text is present on the site.
-    Uses normalized substring match first, then strict keyword match for long values.
+    Intel processor/platform labels must match a single tag or contiguous phrase —
+    never scattered words across the full page (product titles like 'X29 Ultra'
+    previously caused false passes).
     """
     if not expected_subcategory or not str(expected_subcategory).strip():
         return False
@@ -55,23 +115,62 @@ def subcategory_on_site(expected_subcategory, haystack_normalized, visible_tags=
     norm_haystack = normalize_category_text(haystack_normalized)
     canonical_expected = canonical_subcategory_value(expected)
     norm_canonical = normalize_category_text(canonical_expected)
+    expected_sig = _intel_processor_signature(canonical_expected or expected)
+    tags = list(visible_tags or [])
 
-    if norm_expected and norm_expected in norm_haystack:
-        return True
-    if norm_canonical and norm_canonical in norm_haystack:
-        return True
+    def _tag_matches(tag_text):
+        tag_norm = normalize_category_text(tag_text)
+        if not tag_norm:
+            return False
+        # Strip sidebar counts: "Label (1)"
+        tag_norm = re.sub(r"\s*\(\d+\)\s*$", "", tag_norm).strip()
+        if expected_sig and not _compatible_intel_signatures(expected_sig, tag_norm):
+            return False
+        if norm_expected and (tag_norm == norm_expected or norm_expected in tag_norm):
+            return True
+        if norm_canonical and (tag_norm == norm_canonical or norm_canonical in tag_norm):
+            return True
+        # Compact compare without spaces
+        if norm_expected and norm_expected.replace(" ", "") == tag_norm.replace(" ", ""):
+            return True
+        if norm_canonical and norm_canonical.replace(" ", "") == tag_norm.replace(" ", ""):
+            return True
+        if expected_sig:
+            # For Intel SKUs, require every significant word inside THIS tag.
+            words = _significant_words(canonical_expected or expected)
+            return bool(words) and all(w in tag_norm for w in words)
+        return False
 
-    # OpenVINO Tool Kit vs OpenVINO Toolkit, etc.
-    if norm_expected.replace(" ", "") in norm_haystack.replace(" ", ""):
-        return True
-    if norm_canonical.replace(" ", "") in norm_haystack.replace(" ", ""):
-        return True
+    # 1) Prefer explicit listing/detail tags.
+    for tag in tags:
+        if _tag_matches(tag):
+            return True
+
+    # 2) Contiguous phrase in page text (not scattered tokens).
+    for phrase in (norm_canonical, norm_expected):
+        if phrase and phrase in norm_haystack:
+            if expected_sig and not _compatible_intel_signatures(expected_sig, phrase):
+                continue
+            return True
+        if phrase and phrase.replace(" ", "") in norm_haystack.replace(" ", ""):
+            if expected_sig and not _compatible_intel_signatures(expected_sig, phrase):
+                continue
+            return True
+
+    # Intel SKUs: stop here. Do not fall back to loose page-wide keyword matching.
+    if expected_sig:
+        return False
 
     # Site may use shorter label (e.g. Order Validation vs Order Accuracy)
     aliases = {
         "order accuracy": ["order validation", "order accuracy"],
         "openvino tool kit": ["openvino toolkit", "openvino tool kit"],
+        "openvino toolkit": ["openvino toolkit", "openvino tool kit"],
         "health life sciences": [
+            "healthcare and life sciences",
+            "health life sciences",
+        ],
+        "healthcare and life sciences": [
             "healthcare and life sciences",
             "health life sciences",
         ],
@@ -85,64 +184,38 @@ def subcategory_on_site(expected_subcategory, haystack_normalized, visible_tags=
         ],
     }
     for key, variants in aliases.items():
-        if key in norm_expected or norm_expected in key:
+        if key in norm_expected or norm_expected in key or key in norm_canonical:
             if any(v in norm_haystack for v in variants):
                 return True
+            if any(_tag_matches(v) or any(v in normalize_category_text(t) for t in tags) for v in variants):
+                return True
 
-    # Parenthetical values: also try the phrase inside parentheses
+    # Parenthetical values for non-Intel lines
     paren = re.search(r"\(([^)]+)\)", expected)
     if paren:
         inner = normalize_category_text(paren.group(1))
         if inner and inner in norm_haystack:
             return True
-        # e.g. "Product Recognition (detection, classification, tracking)"
         for part in re.split(r"[,;]", paren.group(1)):
             part_norm = normalize_category_text(part)
             if len(part_norm) > 4 and part_norm in norm_haystack:
                 return True
 
-    # Main label before "("
     main = expected.split("(")[0].strip()
     if main and main != expected:
         if normalize_category_text(main) in norm_haystack:
             return True
 
-    if visible_tags:
-        for tag in visible_tags:
-            tag_norm = normalize_category_text(tag)
-            if norm_expected in tag_norm or tag_norm in norm_expected:
-                return True
-            if norm_canonical in tag_norm or tag_norm in norm_canonical:
-                return True
-            if main and normalize_category_text(main) in tag_norm:
-                return True
-
-    # Strict keyword fallback for long Intel / use-case strings
-    words = _significant_words(expected)
+    # Generic keyword fallback (non-Intel only)
+    words = _significant_words(canonical_expected or expected)
     if len(words) >= 3:
         matched = sum(1 for w in words if w in norm_haystack)
         threshold = max(len(words) - 1, int(len(words) * 0.75))
         if matched >= threshold:
             return True
 
-    if len(words) == 2:
-        if all(w in norm_haystack for w in words):
-            return True
-
-    # Intel processor lines: match generation + core + ultra/series tokens
-    if "intel" in norm_expected and "processor" in norm_expected:
-        gen = re.search(r"(\d+)(?:th|st|nd|rd)?\s*gen", norm_expected)
-        series = re.search(r"series\s*(\d+)", norm_expected)
-        ultra = "ultra" in norm_expected
-        checks = []
-        if gen:
-            checks.append(gen.group(1) in norm_haystack)
-        if series:
-            checks.append(f"series {series.group(1)}" in norm_haystack or f"series{series.group(1)}" in norm_haystack.replace(" ", ""))
-        if ultra:
-            checks.append("ultra" in norm_haystack)
-        if checks and all(checks):
-            return True
+    if len(words) == 2 and all(w in norm_haystack for w in words):
+        return True
 
     return False
 
